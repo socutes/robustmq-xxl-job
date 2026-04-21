@@ -50,6 +50,13 @@ Admin scheduleThread          Admin ringThread         Admin TriggerPool        
 
 **手动触发 / API 触发**：跳过 scheduleThread 和 ringThread，直接从 TriggerPool 开始（STEP 3）。
 
+> **护栏状态（L-1）**
+>
+> - **当前护法**：集成测试 `TriggerChainTest`
+> - **覆盖范围**：Admin 侧触发路径（`TriggerPool.trigger()` → `processTrigger()` → INSERT `xxl_job_log`）。测试用 mock 执行器地址，不覆盖 Executor 侧。
+> - **未覆盖**：scheduleThread/ringThread 的时间轮写入逻辑、misfire 两种策略分支、多节点锁竞争。
+> - **未来补充**：为 misfire 补独立用例；scheduleThread 的 ±2 格边界用 Characterization Test 覆盖（需要 mock 时钟输入）。
+
 ---
 
 ## 流程二：执行结果回调
@@ -78,9 +85,17 @@ Admin scheduleThread          Admin ringThread         Admin TriggerPool        
 ```
 
 **回调失败时**：
+
 1. 写文件 `{logPath}/xxl-job-callback-{md5}.log`
 2. `TriggerRetryCallbackThread` 每 30 秒读取失败文件重试
 3. 重试成功后删除文件
+
+> **护栏状态（L-2）**
+>
+> - **当前护法**：集成测试 `CallbackChainTest`（主流程）；文件重试分支暂无测试
+> - **覆盖范围**：`JobCompleteHelper.callback()` → `doCallback()` → `JobCompleter.complete()` → UPDATE `xxl_job_log`；覆盖成功回调（handle_code=200）和失败回调（handle_code=500）两个分支。
+> - **未覆盖**：文件重试分支（`TriggerRetryCallbackThread`）；多条 CallbackRequest 批量回调的幂等性（handle_code > 0 时的"重复回调"保护）。
+> - **未来补充**：为文件重试分支补 Characterization Test，重点固化 callback 文件的 Gson 序列化格式作为契约，防止 `CallbackRequest` 字段改名破坏存量文件。
 
 ---
 
@@ -111,8 +126,15 @@ Admin scheduleThread          Admin ringThread         Admin TriggerPool        
 ```
 
 **关键阈值**：
+
 - 心跳间隔：30s（`Const.BEAT_TIMEOUT`）
 - 超时判定：90s（`Const.DEAD_TIMEOUT`），即连续 3 次心跳失败后被剔除
+
+> **护栏状态（L-4）**
+>
+> - **当前护法**：无自动化测试，目前依赖手动观察管理台执行器在线状态
+> - **覆盖范围**：无
+> - **未来补充**：用 Characterization Test 直接操作 DB——插入构造好的 `xxl_job_registry` 数据，手动调用 `JobRegistryHelper` 的扫描方法，断言 `xxl_job_group.address_list` 的更新结果；重点覆盖 90s 超时边界的 off-by-one 和所有实例死亡时 address_list 清空行为。
 
 ---
 
@@ -141,6 +163,12 @@ Admin JobFailAlarmMonitorHelper                      Admin TriggerPool          
             │                                               │                          │
 ```
 
+> **护栏状态（L-5）**
+>
+> - **当前护法**：无自动化测试；`alarm_status` 的 5 个状态值（0/-1/1/2/3）仅在 `JobFailAlarmMonitorHelper.java:62` 的注释中定义，散落难查。
+> - **覆盖范围**：无
+> - **未来补充**：集成测试，直接插一条 `alarm_status=0`、`handle_code=500` 的 `xxl_job_log`，手动调用扫描逻辑，告警 Bean 替换为 mock，断言 `alarm_status` 的状态机流转（0 → -1 → 2/3）；重点验证 `alarm_status=-1` 的 CAS 语义防止并发重复处理。
+
 ---
 
 ## 流程五：执行器失联检测（兜底机制）
@@ -166,6 +194,12 @@ Admin JobCompleteHelper.monitorThread
 ```
 
 此机制是保证调度日志不永远停在"进行中"状态的最后兜底，触发条件：执行器进程崩溃且未来得及发回调。
+
+> **护栏状态（L-6）**
+>
+> - **当前护法**：无自动化测试；兜底逻辑依赖 60s 扫描周期和 10min 超时窗口，生产中不易感知是否正常运行。
+> - **覆盖范围**：无
+> - **未来补充**：Characterization Test——插入 `trigger_time = now - 11 minutes` 且 `handle_code=0` 的 log，将执行器地址从 `address_list` 移除，手动触发 `monitorThread` 的扫描方法，断言 `handle_code` 变为 500；同时验证执行器仍在线时 `handle_code=0` 不变（防止误杀慢任务）。
 
 ---
 
