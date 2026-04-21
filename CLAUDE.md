@@ -1,6 +1,6 @@
 # CLAUDE.md — XXL-JOB 项目上下文
 
-> 本文件由 AI 生成，供 AI 读取。源材料：ARCHITECTURE.md（基于 v3.4.1-SNAPSHOT 代码实测）。
+> 本文件由 AI 生成，供 AI 读取。源材料：docs/architecture.md（基于 v3.4.1-SNAPSHOT 代码实测）。
 
 ---
 
@@ -95,7 +95,7 @@ scheduleThread（每秒扫 DB，SELECT FOR UPDATE，预读 5s 内任务）
 2. **触碰以下位置前，先问我**，不要自行推进：
    - 分布式调度锁机制变更（`xxl_job_lock` + `XxlJobLockMapper.xml`）——需要架构团队决策
    - AI 示例模块（`xxl-job-executor-sample-springboot-ai/`）的包结构或命名——可能有外部依赖方
-   - 任何涉及 ARCHITECTURE.md"代码之外的未决问题"一节中标注"问人"的事项
+   - 任何涉及 docs/architecture.md"代码之外的未决问题"一节中标注"问人"的事项
 
 3. **跨多个文件的改动**，先给我列改动清单（文件 + 改哪段 + 改动原因），确认后再执行。
 
