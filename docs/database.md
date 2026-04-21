@@ -60,6 +60,7 @@
 | `update_time` | datetime | 最近心跳时间；`JobRegistryHelper` 用此字段判断实例是否存活（超时阈值 90s） |
 
 **索引**：
+
 - `UNIQUE KEY i_g_k_v (registry_group, registry_key, registry_value)`：保证同一实例只有一条记录，心跳时 upsert
 
 ---
@@ -126,17 +127,44 @@
 | `executor_sharding_param` | varchar(20) | 分片参数，格式 `broadcastIndex/broadcastTotal` |
 | `executor_fail_retry_count` | int | 剩余重试次数 |
 | `trigger_time` | datetime | 调度触发时间 |
-| `trigger_code` | int NOT NULL | 调度结果码：200=触发成功，500=失败 |
-| `trigger_msg` | text | 调度过程日志（路由信息、HTTP 请求结果等） |
+| `trigger_code` | int NOT NULL | 调度结果码：200=触发成功，500=失败，0=初始写入默认值 |
+| `trigger_msg` | text | 调度过程日志（路由信息、HTTP 请求结果、**执行器地址列表全量**），HTML 格式，**无长度截断** |
 | `handle_time` | datetime | 执行完成时间（由回调写入） |
 | `handle_code` | int NOT NULL | 执行结果码：0=进行中，200=成功，500=失败 |
-| `handle_msg` | text | 执行结果描述（由回调写入） |
-| `alarm_status` | tinyint NOT NULL DEFAULT 0 | 告警状态：0=默认，1=无需告警，2=告警成功，3=告警失败 |
+| `handle_msg` | text | 执行结果描述（由回调写入），**应用层截断上限 15000 chars**（[JobCompleter.java:45](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/complete/JobCompleter.java#L45)），截断在子任务消息拼接之后执行 |
+| `alarm_status` | tinyint NOT NULL DEFAULT 0 | 告警状态，见下方状态机说明 |
+
+**alarm_status 状态机**（DDL 注释仅记录 0/1/2/3，**-1 未写入 DDL**，只在代码注释中定义）：
+
+| 值 | 含义 | 风险 |
+|----|------|------|
+| 0 | 默认（待处理） | — |
+| -1 | 锁定中（处理中间态） | **进程崩溃后永久卡在此状态，既不重试也不被扫描发现** |
+| 1 | 无需告警（job 已不存在） | — |
+| 2 | 告警成功 | — |
+| 3 | 告警失败 | — |
 
 **索引**：
+
 - `KEY I_trigger_time (trigger_time)`：按时间查询/清理日志
-- `KEY I_handle_code (handle_code)`：`JobFailAlarmMonitorHelper` 扫描 handle_code=500
+- `KEY I_handle_code (handle_code)`：`JobFailAlarmMonitorHelper` 扫描失败日志
 - `KEY I_jobgroup (job_group)` / `KEY I_jobid (job_id)`：按分组/任务查询
+- **无联合索引**：`job_id + trigger_time` 组合查询（管理台最常见模式）无对应联合索引，多条件过滤时 MySQL 只能选一个单列索引，其余条件回表判断
+
+**写入路径摘要**（详见 [docs/log-table-refactor-plan.md](log-table-refactor-plan.md)）：
+
+| 写入时机 | 写入字段 | 代码位置 |
+|---------|---------|---------|
+| 触发开始（INSERT） | job_group / job_id / trigger_time / trigger_code=0 / handle_code=0 | [JobTrigger.java:148](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/trigger/JobTrigger.java#L148) |
+| HTTP /run 完成（UPDATE） | trigger_code / trigger_msg / executor_* 所有字段 | [JobTrigger.java:238](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/trigger/JobTrigger.java#L238) |
+| 执行器回调（UPDATE） | handle_time / handle_code / handle_msg | [JobCompleter.java:53](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/complete/JobCompleter.java#L53) |
+| 告警处理（UPDATE ×2） | alarm_status: 0→-1（加锁），-1→终态 | [JobFailAlarmMonitorHelper.java:46](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobFailAlarmMonitorHelper.java#L46) |
+
+**清理机制**：
+
+- 自动：`JobLogReportHelper` 每 24h 一次，按 `trigger_time <= now - logretentiondays` 批量 DELETE（1000 行/批），`logretentiondays=-1` 时永不清理
+- 手动：管理台 `/joblog/clearLog`，可按时间（1/3/6/12 个月前）或按条数保留（最新 1k/1w/3w/10w 条）
+- 无归档，物理删除
 
 ---
 
@@ -182,7 +210,7 @@
 
 ## 表关系图
 
-```
+```text
 xxl_job_group (id) ←── xxl_job_info (job_group)
 xxl_job_info  (id) ←── xxl_job_log (job_id)
 xxl_job_info  (id) ←── xxl_job_logglue (job_id)

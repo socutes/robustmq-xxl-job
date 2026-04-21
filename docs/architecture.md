@@ -121,7 +121,7 @@ graph TD
 
 ### 主链路
 
-```
+```text
 STEP 1  scheduleThread（Admin）
         每秒扫描 DB，SELECT FOR UPDATE 拿锁
         → scheduleJobQuery(nowTime + 5s) → List<XxlJobInfo>
@@ -278,6 +278,10 @@ STEP 8  JobCompleter（Admin）
 | Y-4 | **GLUE 版本上限未在已读代码确认** | `XxlJobLogGlueMapper.xml` | 文档称 30 版，需读 mapper XML 或 Service 层的 `DELETE ... LIMIT ?` 确认实际值 |
 | Y-5 | **fastPool/slowPool 默认值与文档不符** | [application.properties](xxl-job-admin/src/main/resources/application.properties) | ARCHITECTURE.md 原文写"默认 200/100"，实际配置是 300/200；代码硬最小值才是 200/100 |
 | Y-6 | **`scheduleBatchUpdate` 替换单行更新（近期改动）** | [JobScheduleHelper.java:141](xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobScheduleHelper.java#L141) | 旧代码注释保留，新旧并存，回归风险窗口尚未关闭 |
+| Y-7 | **`xxl_job_log` 无联合索引，多条件查询只能走单列索引** | [XxlJobLogMapper.xml:47-79](xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L47) | `pageList` 最常见的 `job_id + trigger_time` 组合无联合索引；`findFailJobLogIds` 负向条件导致 `I_handle_code` 实际失效，每 10s 潜在全表扫描；详见 [docs/log-table-refactor-plan.md](docs/log-table-refactor-plan.md) |
+| Y-8 | **`alarm_status=-1` 无超时恢复，进程崩溃后永久泄漏** | [JobFailAlarmMonitorHelper.java:46-70](xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobFailAlarmMonitorHelper.java#L46) | 0→-1 加锁后进程崩溃，该行既不被重试也不被扫描发现（`findFailJobLogIds` 限定 `alarm_status=0`）；-1 状态未写入 DDL 注释 |
+| Y-9 | **`JobLogReportHelper` 清理触发时机不固定，重启后立即执行** | [JobLogReportHelper.java:36](xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L36) | `lastCleanLogTime` 初始值 0，Admin 重启后第一分钟必然触发清理；清理结果无日志输出，运维不可观测 |
+| Y-10 | **`trigger_msg` 无长度截断，执行器地址列表全量拼入** | [JobTrigger.java:205](xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/trigger/JobTrigger.java#L205) | `handle_msg` 有 15000 chars 截断保护，`trigger_msg` 无，执行器组地址多时单行体积不可控 |
 
 #### 绿（正常演进，定位即可）
 

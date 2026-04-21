@@ -108,34 +108,36 @@ scheduleThread（每秒扫 DB，SELECT FOR UPDATE，预读 5s 内任务）
    - 改 `processTrigger()` → 验证日志落库（`xxl_job_log`）的字段仍完整
    - 改 `TriggerCallbackThread` 主流程 → 验证文件重试路径（`TriggerRetryCallbackThread`）行为一致
 
-6. **触碰以下核心链路文件前，先跑集成测试确认基线绿**，失败则先排查再改：
+6. **改动 `xxl_job_log` 相关代码前，先阅读 [docs/log-table-refactor-plan.md](docs/log-table-refactor-plan.md)**，确认改动范围与在制目标（G-1 到 G-10）的一致性，避免与进行中的治理工作冲突。涉及文件：`XxlJobLogMapper.java`（及 XML）、`JobTrigger.java`（trigger_msg 截断）、`JobLogReportHelper.java`（清理逻辑）、`JobFailAlarmMonitorHelper.java`（alarm_status 状态机）、`JobCompleter.java`（handle_msg 截断）。
+
+7. **触碰以下核心链路文件前，先跑集成测试确认基线绿**，失败则先排查再改：
    - 触碰文件：`JobTrigger.java`、`JobTriggerPoolHelper.java`、`JobCompleteHelper.java`、`XxlJobLogMapper.java`（及对应 XML）、`AdminBizImpl.java`
    - 基线命令：`mvn test -Dtest="TriggerChainTest,CallbackChainTest,LogQueryChainTest" -pl xxl-job-admin`
    - 测试文件：`src/test/java/com/xxl/job/admin/integration/`（三个文件，需本地 MySQL + `xxl_job` 库）
    - 基线红时不要继续改动；先查是测试环境问题还是已有代码 bug，再决定是修环境还是修代码
 
-7. **改 `JobThread.java:170-190`（空闲销毁逻辑）时**，保持 `toStop` flag 的写入在 queue 操作之前，不要调整这个顺序。
+8. **改 `JobThread.java:170-190`（空闲销毁逻辑）时**，保持 `toStop` flag 的写入在 queue 操作之前，不要调整这个顺序。
 
-8. **不要启用 `FIX_DELAY`**（`ScheduleTypeEnum.java:28` 注释掉的枚举值）——`JobCompleter.java:50` 里有占位逻辑但功能不完整，启用会引入不可预期行为。
+9. **不要启用 `FIX_DELAY`**（`ScheduleTypeEnum.java:28` 注释掉的枚举值）——`JobCompleter.java:50` 里有占位逻辑但功能不完整，启用会引入不可预期行为。
 
 ### 判断不确定时
 
-9. **对以下事项，不猜，直接说"需要你确认"**：
-   - GLUE 版本历史上限（文档称 30 版，代码未直接确认）
-   - `fastPool`/`slowPool` 线程数对当前生产 QPS 是否够用
-   - `AdminBiz` 注释掉的 7 个方法是否有外部调用方在等待
+10. **对以下事项，不猜，直接说"需要你确认"**：
+    - GLUE 版本历史上限（文档称 30 版，代码未直接确认）
+    - `fastPool`/`slowPool` 线程数对当前生产 QPS 是否够用
+    - `AdminBiz` 注释掉的 7 个方法是否有外部调用方在等待
 
-10. **看到 `AdminBiz.java` 里注释掉的方法**（`jobAdd`/`jobUpdate`/`jobDelete` 等），不要把它们当成可以随意实现的空位——先问我这些方法的实现计划。
+11. **看到 `AdminBiz.java` 里注释掉的方法**（`jobAdd`/`jobUpdate`/`jobDelete` 等），不要把它们当成可以随意实现的空位——先问我这些方法的实现计划。
 
 ### 代码风格约束
 
-11. **不要动 `deprecated/` 和 `old/` 目录**，也不要在新代码里引用它们——清理前需确认无外部 jar 依赖。
+12. **不要动 `deprecated/` 和 `old/` 目录**，也不要在新代码里引用它们——清理前需确认无外部 jar 依赖。
 
-12. **升级 Netty 版本时**，`EmbedServer.java` 要全量回归，不能只改 pom 版本号。
+13. **升级 Netty 版本时**，`EmbedServer.java` 要全量回归，不能只改 pom 版本号。
 
-13. **新增告警渠道**，实现 `JobAlarm` 接口注册为 Spring Bean 即可，不要改 `JobAlarmer.java` 的遍历逻辑。
+14. **新增告警渠道**，实现 `JobAlarm` 接口注册为 Spring Bean 即可，不要改 `JobAlarmer.java` 的遍历逻辑。
 
-14. **新增路由策略**，继承 `ExecutorRouter` 并在 `ExecutorRouteStrategyEnum` 加枚举值，不要改现有 10 种策略的实现。
+15. **新增路由策略**，继承 `ExecutorRouter` 并在 `ExecutorRouteStrategyEnum` 加枚举值，不要改现有 10 种策略的实现。
 
 ---
 
