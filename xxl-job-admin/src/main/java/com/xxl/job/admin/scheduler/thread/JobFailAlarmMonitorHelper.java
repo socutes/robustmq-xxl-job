@@ -29,6 +29,12 @@ public class JobFailAlarmMonitorHelper {
 	 * start
 	 */
 	public void start(){
+		// reset records stuck at alarm_status=-1 due to prior crash (H-4)
+		int resetCount = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().resetStuckAlarmStatus();
+		if (resetCount > 0) {
+			logger.warn(">>>>>>>>>>> xxl-job, reset {} stuck alarm_status=-1 records on startup, may trigger re-alarm", resetCount);
+		}
+
 		monitorThread = new Thread(new Runnable() {
 
 			@Override

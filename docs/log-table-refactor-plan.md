@@ -192,10 +192,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`pageList` 的 WHERE 条件是 `job_id + trigger_time 范围 + handle_code 状态` 的动态组合，表上 4 个索引全部是单列独立索引，MySQL 单次查询只能选一个，其余条件回表逐行判断。`ORDER BY t.id DESC` 与所有过滤索引均不对齐，产生 filesort。
 
 **证据**：
+
 - 4 个单列索引，无联合索引：[doc/db/tables_xxl_job.sql:100-104](../doc/db/tables_xxl_job.sql#L100)
 - pageList WHERE + ORDER BY：[XxlJobLogMapper.xml:47-79](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L47)
 
 **根因假设**：
+
 - 假设 A：缺少 `(job_id, trigger_time)` 联合索引，两个最常见过滤字段只能其一走索引
 - 假设 B：`ORDER BY id DESC` 与 `I_trigger_time` 不对齐，即便 trigger_time 过滤命中索引，排序仍需 filesort
 - 假设 C：logStatus=2 的 `NOT IN (0,200) OR NOT IN (0,200)` 负向 OR 条件，优化器大概率走全表
@@ -209,11 +211,13 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`NOT ((trigger_code IN (0,200) AND handle_code=0) OR (handle_code=200)) AND alarm_status=0`，负向复合条件对 `I_handle_code` 利用率差，`alarm_status` 无独立索引。此查询每 10 秒执行一次。
 
 **证据**：
+
 - SQL：[XxlJobLogMapper.xml:230-240](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L230)
 - 调用频率：[JobFailAlarmMonitorHelper.java:81](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobFailAlarmMonitorHelper.java#L81)
 - alarm_status 无索引：[doc/db/tables_xxl_job.sql:100-104](../doc/db/tables_xxl_job.sql#L100)
 
 **根因假设**：
+
 - 假设 A：`NOT (...)` 复合负向条件让优化器无法估算选择率，选择全表扫描
 - 假设 B：`alarm_status=0` 在表中行占比在稳定运行期间可能较高（所有进行中任务均为 0）
 
@@ -226,10 +230,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`xxl_job_log LEFT JOIN xxl_job_registry ON executor_address = registry_value`，`registry_value` 只出现在三列联合唯一索引 `i_g_k_v(registry_group, registry_key, registry_value)` 的第三位，单独 registry_value 无法利用该索引做 ref 访问，被驱动侧走全表扫描。此查询每 60 秒执行一次。
 
 **证据**：
+
 - SQL：[XxlJobLogMapper.xml:249-260](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L249)
 - xxl_job_registry 索引定义：[doc/db/tables_xxl_job.sql:32](../doc/db/tables_xxl_job.sql#L32)
 
 **根因假设**：
+
 - 假设 A：被驱动表走全表扫描，扫描行数 = xxl_job_registry 总行数 × 驱动表结果集大小
 - 假设 B：`xxl_job_registry` 行数通常不大（执行器数 × 1 条/实例），但在执行器多时放大
 
@@ -242,10 +248,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`JobLogReportHelper` 每分钟对"今天/昨天/前天"各跑一次全天聚合（`BETWEEN day_start AND day_end`），昨天和前天的数据不再变化，一旦写入 `xxl_job_log_report` 后每分钟仍被重复聚合覆盖写入。聚合需回表取 handle_code 和 trigger_code（不在 `I_trigger_time` 覆盖范围内）。
 
 **证据**：
+
 - 聚合 SQL：[XxlJobLogMapper.xml:179-186](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L179)
 - 每分钟 3 次调用：[JobLogReportHelper.java:44-89](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L44)
 
 **根因假设**：
+
 - 假设 A：设计意图是"实时刷新最近 3 天"，但未区分"今天（需实时）"和"历史天（已固化）"
 - 假设 B：回表代价随单天日志量线性增长，日志量大时每分钟 3 次回表成本可感知
 
@@ -258,10 +266,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`do-while` 循环每批 DELETE 1000 行，批次间无 sleep。积压场景下（首次开启清理、logretentiondays 从 -1 改为正值）连续批量 DELETE 持续持有行锁，与在线 SELECT/UPDATE 产生锁争用。
 
 **证据**：
+
 - 清理循环无 sleep：[JobLogReportHelper.java:112-118](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L112)
 - DELETE IN (1000 ids) SQL：[XxlJobLogMapper.xml:222-228](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L222)
 
 **根因假设**：
+
 - 假设 A：InnoDB DELETE IN (...) 持有被删行的行锁，1000 行同时锁定期间其他事务等待
 - 假设 B：RR 隔离级别下 DELETE 额外加间隙锁，锁范围比 RC 更大
 
@@ -278,10 +288,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`trigger_msg` 由 `triggerMsgSb` 拼接，其中包含 `group.getRegistryList()`（执行器组全部地址列表），执行器数量多时体积大。`handle_msg` 有 15000 chars 截断保护，`trigger_msg` 无对应保护。
 
 **证据**：
+
 - `group.getRegistryList()` 整体拼入：[JobTrigger.java:205](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/trigger/JobTrigger.java#L205)
 - handle_msg 截断逻辑：[JobCompleter.java:45-47](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/complete/JobCompleter.java#L45)
 
 **根因假设**：
+
 - 假设 A：大执行器组触发时 trigger_msg 达到数 KB，放大主表平均行体积
 - 假设 B：TEXT 字段超过 768 bytes 时 InnoDB 溢出到 off-page，回表读 TEXT 额外 IO
 
@@ -294,6 +306,7 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`JobCompleter.complete()` 先拼接子任务触发结果（HTML 字符串），再做 15000 chars 截断。若父任务 handleMsg 接近上限且有多子任务，截断点落在 HTML 中间，管理台详情页渲染异常。
 
 **证据**：
+
 - 执行顺序：先 `processChildJob()` 再截断：[JobCompleter.java:42-47](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/complete/JobCompleter.java#L42)
 - 子任务消息拼接：[JobCompleter.java:108](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/complete/JobCompleter.java#L108)
 
@@ -308,10 +321,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`xxl_job_log_report` 记录 running/suc/fail 三种结果计数，不是主表物理行数。容量预测最直接的指标（每天新增多少行）无任何记录。
 
 **证据**：
+
 - `xxl_job_log_report` 字段定义：[doc/db/tables_xxl_job.sql:108-119](../doc/db/tables_xxl_job.sql#L108)，无 log_count 或 total_rows 字段
 - 聚合 SQL 用 COUNT(handle_code) 而非 COUNT(*)：[XxlJobLogMapper.xml:179-186](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L179)
 
 **根因假设**：
+
 - 假设 A：无 SHARDING_BROADCAST 任务时，触发次数等于物理行数，两者一致
 - 假设 B：有分片任务时，一次触发产生 N 行，running+suc+fail 计数 < 实际行数
 
@@ -324,6 +339,7 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`findClearLogIds` 按条数清理时，内层子查询 `SELECT id ... ORDER BY trigger_time DESC LIMIT 0, #{clearBeforeNum}`，外层 `id NOT IN (子查询结果)`。`clearBeforeNum=100000` 时子查询返回 10 万行，外层 NOT IN 代价极高。
 
 **证据**：
+
 - NOT IN 子查询 SQL：[XxlJobLogMapper.xml:200-216](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L200)
 - clearBeforeNum 最大值 100000（type=8）：[JobLogController.java:249](../xxl-job-admin/src/main/java/com/xxl/job/admin/controller/biz/JobLogController.java#L249)
 
@@ -342,6 +358,7 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`lastCleanLogTime` 初始值为 0，Admin 每次重启后第一分钟的循环必然满足 `System.currentTimeMillis() - 0 > 24h`，立即触发清理。重启时间随机（高峰期发版、故障重启），清理可能在非预期时间触发。
 
 **证据**：
+
 - `lastCleanLogTime = 0` 初始值：[JobLogReportHelper.java:36](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L36)
 - 24h 判断逻辑：[JobLogReportHelper.java:99-100](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L99)
 
@@ -356,6 +373,7 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`clearLog()` 返回被删除行数（int），调用方忽略返回值，正常完成无任何日志输出。运维无法从日志确认清理是否执行、删了多少行、耗时多久。
 
 **证据**：
+
 - 返回值被忽略：[JobLogReportHelper.java:116](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L116)，无变量接收
 - 正常路径无日志，仅 catch 块有 error 日志：[JobLogReportHelper.java:122-126](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L122)
 
@@ -368,10 +386,12 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`JobFailAlarmMonitorHelper` 将日志 alarm_status 从 0 改为 -1 后，若告警发送期间进程崩溃（kill -9 或 SMTP 无响应超时后进程终止），该行永远停留在 alarm_status=-1，既不重试告警也不被后续扫描发现（`findFailJobLogIds` 的 WHERE 限定 `alarm_status=0`）。
 
 **证据**：
+
 - `findFailJobLogIds` WHERE 限定 alarm_status=0：[XxlJobLogMapper.xml:230-240](../xxl-job-admin/src/main/resources/mapper/XxlJobLogMapper.xml#L230)
 - 0→-1 到 -1→终态中间段：[JobFailAlarmMonitorHelper.java:46-70](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobFailAlarmMonitorHelper.java#L46)，catch 块只打日志不回滚 alarm_status
 
 **根因假设**：
+
 - 假设 A：正常运行时单线程处理，崩溃窗口极短，-1 泄漏概率低但不为零
 - 假设 B：告警发送（SMTP/Webhook）无响应超时时，进程被 kill -9 的概率更高
 
@@ -396,6 +416,7 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 **问题卡点**：`JobLogController.clearLog()` 和 `JobLogReportHelper.logReportThread` 共用同一套 `findClearLogIds + clearLog` SQL，两者之间无锁或标记防止并发。同时触发时两个 do-while 循环查到重叠 id 集合，各自 DELETE，相互等待行锁。
 
 **证据**：
+
 - 自动清理：[JobLogReportHelper.java:112-118](../xxl-job-admin/src/main/java/com/xxl/job/admin/scheduler/thread/JobLogReportHelper.java#L112)
 - 手动清理：[JobLogController.java:256-262](../xxl-job-admin/src/main/java/com/xxl/job/admin/controller/biz/JobLogController.java#L256)
 - 无共享状态
@@ -494,18 +515,59 @@ ENGINE=InnoDB，DEFAULT CHARSET=utf8mb4。
 
 ---
 
-## 四、后续扩充区
+## 四、方案与改动
 
-> 以下各节在后续阶段填入，当前留空。
+### 4.1 方案选型
 
-### 4.1 方案选型（第 13 讲输入）
+**选定方案**：A（索引优化）+ H（清理逻辑修复）+ C（MySQL 分区表，中期）
 
-_待填入_
+| 方向 | 覆盖问题 | 覆盖目标 |
+|------|---------|---------|
+| A 索引优化（5 个改造点 A-1~A-5） | P-1、P-2、P-3 | G-1、G-2、G-3 |
+| H 清理逻辑修复（5 个改造点 H-1~H-5） | O-1、O-2、O-3、O-4、O-5 | G-5、G-7、G-8、G-9 |
+| C 分区表（4 个改造点 C-1~C-4） | C-1（行数增长）| G-3（清理效率） |
+
+**决策依据摘要**（完整决策见 [decisions/001-log-table-refactor-solution.md](decisions/001-log-table-refactor-solution.md)）：
+
+- 选 A：零停机风险，团队 MySQL 技能栈覆盖，收益最直接
+- 选 H：纯 Java 改动，每个子点独立可逐一上线，alarm_status=-1 是已知存量 bug 必须修
+- 选 C：中长期清理成本远低于持续 DELETE；允许停机窗口，全表重建技术上可行
+- 不选 E/F/G/I：与"不引入新基础设施"约束冲突
+- 暂缓 D/J/K：收益条件当前不满足，按需评估
+
+**考虑过但未选的方案**：pt-archiver 归档（B）、冷热分离（D）、ClickHouse（E）、分库分表（F）、Kafka 异步写（G）、时序库（I）、读写分离（J）、垂直拆表（K）——见 ADR 表格。
+
+---
 
 ### 4.2 改动记录
 
-_待填入_
+> 本节用于记录实际上线的改造点进展。改造点清单和影响矩阵见 [log-table-refactor-changes.md](log-table-refactor-changes.md)。
+
+#### 改造点状态汇总
+
+| 改造点 | 描述 | 状态 | 上线日期 | PR / 提交 |
+|--------|------|------|---------|-----------|
+| A-1 | 索引 (handle_code, alarm_status) | 待执行 | — | — |
+| A-2 | 索引 (job_id, trigger_time) | 待执行 | — | — |
+| A-3 | findFailJobLogIds SQL改写 | 待执行 | — | — |
+| A-4 | pageList ORDER BY 评估决策 | 待执行 | — | — |
+| A-5 | findLostJobIds 补索引 | 待执行 | — | — |
+| H-1 | lastCleanLogTime 初始值 | 待执行 | — | — |
+| H-2 | 清理批次间 sleep | 待执行 | — | — |
+| H-3 | clearLog 返回值 | 待执行 | — | — |
+| H-4 | alarm_status=-1 补偿重置 | 待执行 | — | — |
+| H-5 | 手动/自动清理互斥 | 待执行 | — | — |
+| C-1 | PK 兼容性确认（决策点） | 待执行 | — | — |
+| C-2 | 分区 DDL 全表重建 | 待执行 | — | — |
+| C-3 | 月度新增分区运维规程 | 待执行 | — | — |
+| C-4 | DROP PARTITION 清理 | 待执行 | — | — |
+
+#### 变更日志
+
+首个实际上线记录在此处追加，格式：日期 / 改造点 / 实际变更描述 / 结果。
+
+---
 
 ### 4.3 上线核查清单
 
-_待填入_
+待填入（计划在 A + H 上线前补充具体操作步骤和回滚方案）。

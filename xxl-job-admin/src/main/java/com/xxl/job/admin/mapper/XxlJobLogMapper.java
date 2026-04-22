@@ -57,6 +57,8 @@ public interface XxlJobLogMapper {
 								 @Param("oldAlarmStatus") int oldAlarmStatus,
 								 @Param("newAlarmStatus") int newAlarmStatus);
 
+	public int resetStuckAlarmStatus();
+
 	public List<Long> findLostJobIds(@Param("losedTime") Date losedTime);
 
 }

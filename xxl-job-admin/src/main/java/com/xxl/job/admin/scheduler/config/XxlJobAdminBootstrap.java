@@ -75,6 +75,9 @@ public class XxlJobAdminBootstrap implements InitializingBean, DisposableBean {
     public JobCompleteHelper getJobCompleteHelper() {
         return jobCompleteHelper;
     }
+    public JobLogReportHelper getJobLogReportHelper() {
+        return jobLogReportHelper;
+    }
 
     /**
      * do start

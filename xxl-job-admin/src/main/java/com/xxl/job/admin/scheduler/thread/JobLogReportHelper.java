@@ -10,6 +10,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * job log report helper
@@ -22,6 +23,7 @@ public class JobLogReportHelper {
 
     private Thread logReportThread;
     private volatile boolean toStop = false;
+    public final AtomicBoolean cleaning = new AtomicBoolean(false);
 
     /**
      * start
@@ -32,8 +34,8 @@ public class JobLogReportHelper {
             @Override
             public void run() {
 
-                // last clean log time
-                long lastCleanLogTime = 0;
+                // last clean log time — init to now to avoid immediate cleanup on startup (H-1)
+                long lastCleanLogTime = System.currentTimeMillis();
 
 
                 while (!toStop) {
@@ -108,17 +110,26 @@ public class JobLogReportHelper {
                             expiredDay.set(Calendar.MILLISECOND, 0);
                             Date clearBeforeTime = expiredDay.getTime();
 
-                            // clean expired log
-                            List<Long> logIds = null;
-                            do {
-                                logIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findClearLogIds(0, 0, clearBeforeTime, 0, 1000);
-                                if (logIds!=null && !logIds.isEmpty()) {
-                                    XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().clearLog(logIds);
+                            // clean expired log — skip if manual clean is running concurrently (H-5)
+                            if (!cleaning.compareAndSet(false, true)) {
+                                logger.info(">>>>>>>>>>> xxl-job, log-clean skipped: manual clean in progress");
+                            } else {
+                                try {
+                                    List<Long> logIds = null;
+                                    do {
+                                        logIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findClearLogIds(0, 0, clearBeforeTime, 0, 1000);
+                                        if (logIds!=null && !logIds.isEmpty()) {
+                                            int deleted = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().clearLog(logIds);
+                                            logger.info(">>>>>>>>>>> xxl-job, log-clean batch deleted:{} rows", deleted);
+                                            TimeUnit.MILLISECONDS.sleep(100);
+                                        }
+                                    } while (logIds!=null && !logIds.isEmpty() && !toStop);
+                                } finally {
+                                    cleaning.set(false);
                                 }
-                            } while (logIds!=null && !logIds.isEmpty());
-
-                            // update clean time
-                            lastCleanLogTime = System.currentTimeMillis();
+                                // update clean time only when cleanup actually ran (H-5)
+                                lastCleanLogTime = System.currentTimeMillis();
+                            }
                         }
                     } catch (Throwable e) {
                         if (!toStop) {

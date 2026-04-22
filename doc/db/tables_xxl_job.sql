@@ -29,7 +29,8 @@ CREATE TABLE `xxl_job_registry`
     `registry_value`    varchar(255) NOT NULL,
     `update_time`       datetime DEFAULT NULL,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `i_g_k_v` (`registry_group`, `registry_key`, `registry_value`) USING BTREE
+    UNIQUE KEY `i_g_k_v` (`registry_group`, `registry_key`, `registry_value`) USING BTREE,
+    KEY `I_registry_value` (`registry_value`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
 
@@ -100,8 +101,10 @@ CREATE TABLE `xxl_job_log`
     PRIMARY KEY (`id`),
     KEY `I_trigger_time` (`trigger_time`),
     KEY `I_handle_code` (`handle_code`),
+    KEY `I_handle_alarm` (`handle_code`, `alarm_status`),
     KEY `I_jobgroup` (`job_group`),
-    KEY `I_jobid` (`job_id`)
+    KEY `I_jobid` (`job_id`),
+    KEY `I_jobid_trigtime` (`job_id`, `trigger_time`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
 

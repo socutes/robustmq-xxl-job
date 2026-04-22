@@ -229,11 +229,7 @@
 
 	<select id="findFailJobLogIds" resultType="long" >
 		SELECT id FROM `xxl_job_log`
-		WHERE !(
-			(trigger_code in (0, 200) and handle_code = 0)
-			OR
-			(handle_code = 200)
-		)
+		WHERE handle_code NOT IN (0, 200)
 		AND `alarm_status` = 0
 		ORDER BY id ASC
 		LIMIT #{pagesize}
@@ -244,6 +240,10 @@
 		SET
 			`alarm_status` = #{newAlarmStatus}
 		WHERE `id`= #{logId} AND `alarm_status` = #{oldAlarmStatus}
+	</update>
+
+	<update id="resetStuckAlarmStatus" >
+		UPDATE xxl_job_log SET alarm_status = 0 WHERE alarm_status = -1
 	</update>
 
 	<select id="findLostJobIds" resultType="long" >

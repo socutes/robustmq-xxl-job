@@ -23,6 +23,7 @@ import com.xxl.tool.response.PageModel;
 import com.xxl.tool.response.Response;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -253,13 +254,25 @@ public class JobLogController {
 			return Response.ofFail(I18nUtil.getString("joblog_clean_type_invalid"));
 		}
 
-		List<Long> logIds = null;
-		do {
-			logIds = xxlJobLogMapper.findClearLogIds(jobGroup, jobId, clearBeforeTime, clearBeforeNum, 1000);
-			if (logIds!=null && !logIds.isEmpty()) {
-				xxlJobLogMapper.clearLog(logIds);
-			}
-		} while (logIds!=null && !logIds.isEmpty());
+		if (XxlJobAdminBootstrap.getInstance().getJobLogReportHelper().cleaning.get()) {
+			return Response.ofFail(I18nUtil.getString("joblog_clean_auto_running"));
+		}
+		if (!XxlJobAdminBootstrap.getInstance().getJobLogReportHelper().cleaning.compareAndSet(false, true)) {
+			return Response.ofFail(I18nUtil.getString("joblog_clean_auto_running"));
+		}
+		try {
+			List<Long> logIds = null;
+			do {
+				logIds = xxlJobLogMapper.findClearLogIds(jobGroup, jobId, clearBeforeTime, clearBeforeNum, 1000);
+				if (logIds!=null && !logIds.isEmpty()) {
+					int deleted = xxlJobLogMapper.clearLog(logIds);
+					logger.info(">>>>>>>>>>> xxl-job, log-clean batch deleted:{} rows", deleted);
+					try { TimeUnit.MILLISECONDS.sleep(100); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+				}
+			} while (logIds!=null && !logIds.isEmpty());
+		} finally {
+			XxlJobAdminBootstrap.getInstance().getJobLogReportHelper().cleaning.set(false);
+		}
 
 		return Response.ofSuccess();
 	}
