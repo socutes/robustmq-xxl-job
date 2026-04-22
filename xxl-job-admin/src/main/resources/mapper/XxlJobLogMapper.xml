@@ -229,7 +229,7 @@
 
 	<select id="findFailJobLogIds" resultType="long" >
 		SELECT id FROM `xxl_job_log`
-		WHERE handle_code NOT IN (0, 200)
+		WHERE handle_code IN (500, 502)
 		AND `alarm_status` = 0
 		ORDER BY id ASC
 		LIMIT #{pagesize}
