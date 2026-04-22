@@ -108,6 +108,31 @@ CREATE TABLE `xxl_job_log`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
 
+CREATE TABLE `xxl_job_log_archive`
+(
+    `id`                        bigint(20)          NOT NULL COMMENT '原主键，非自增',
+    `job_group`                 int(11)             NOT NULL COMMENT '执行器主键ID',
+    `job_id`                    int(11)             NOT NULL COMMENT '任务，主键ID',
+    `executor_address`          varchar(255)        DEFAULT NULL COMMENT '执行器地址，本次执行的地址',
+    `executor_handler`          varchar(255)        DEFAULT NULL COMMENT '任务handler',
+    `executor_param`            text                DEFAULT NULL COMMENT '任务参数',
+    `executor_sharding_param`   varchar(20)         DEFAULT NULL COMMENT '任务分片参数，格式如 1/2',
+    `executor_fail_retry_count` int(11)             NOT NULL DEFAULT '0' COMMENT '失败重试次数',
+    `trigger_time`              datetime            DEFAULT NULL COMMENT '调度-时间',
+    `trigger_code`              int(11)             NOT NULL COMMENT '调度-结果',
+    `trigger_msg`               text                COMMENT '调度-日志',
+    `handle_time`               datetime            DEFAULT NULL COMMENT '执行-时间',
+    `handle_code`               int(11)             NOT NULL COMMENT '执行-状态',
+    `handle_msg`                text                COMMENT '执行-日志',
+    `alarm_status`              tinyint(4)          NOT NULL DEFAULT '0' COMMENT '告警状态：0-默认、1-无需告警、2-告警成功、3-告警失败',
+    `archived_at`               datetime            NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '归档时间',
+    PRIMARY KEY (`id`),
+    KEY `I_trigger_time` (`trigger_time`),
+    KEY `I_jobid` (`job_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COMMENT = 'xxl_job_log 过期数据归档表，只读，不参与调度链路';
+
 CREATE TABLE `xxl_job_log_report`
 (
     `id`            int(11) NOT NULL AUTO_INCREMENT,
