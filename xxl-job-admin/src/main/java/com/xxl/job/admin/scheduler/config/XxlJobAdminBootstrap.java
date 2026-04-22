@@ -10,6 +10,7 @@ import com.xxl.job.core.openapi.ExecutorBiz;
 import com.xxl.tool.core.StringTool;
 import com.xxl.tool.http.HttpTool;
 import jakarta.annotation.Resource;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -205,8 +206,8 @@ public class XxlJobAdminBootstrap implements InitializingBean, DisposableBean {
     private XxlJobLockMapper xxlJobLockMapper;
     @Resource
     private JavaMailSender mailSender;
-    /*@Resource
-    private DataSource dataSource;*/
+    @Resource
+    private DataSource dataSource;
     @Resource
     private PlatformTransactionManager transactionManager;
     @Resource
@@ -292,9 +293,9 @@ public class XxlJobAdminBootstrap implements InitializingBean, DisposableBean {
         return mailSender;
     }
 
-    /*public DataSource getDataSource() {
+    public DataSource getDataSource() {
         return dataSource;
-    }*/
+    }
 
     public PlatformTransactionManager getTransactionManager() {
         return transactionManager;

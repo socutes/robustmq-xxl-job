@@ -5,6 +5,11 @@ import com.xxl.job.admin.model.XxlJobLogReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -115,15 +120,19 @@ public class JobLogReportHelper {
                                 logger.info(">>>>>>>>>>> xxl-job, log-clean skipped: manual clean in progress");
                             } else {
                                 try {
-                                    List<Long> logIds = null;
-                                    do {
-                                        logIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findClearLogIds(0, 0, clearBeforeTime, 0, 1000);
-                                        if (logIds!=null && !logIds.isEmpty()) {
-                                            int deleted = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().clearLog(logIds);
-                                            logger.info(">>>>>>>>>>> xxl-job, log-clean batch deleted:{} rows", deleted);
-                                            TimeUnit.MILLISECONDS.sleep(100);
-                                        }
-                                    } while (logIds!=null && !logIds.isEmpty() && !toStop);
+                                    boolean dropDone = tryDropExpiredPartitions(clearBeforeTime);
+                                    if (!dropDone) {
+                                        // fallback: batch DELETE (non-partitioned table or DROP PARTITION failed)
+                                        List<Long> logIds = null;
+                                        do {
+                                            logIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findClearLogIds(0, 0, clearBeforeTime, 0, 1000);
+                                            if (logIds!=null && !logIds.isEmpty()) {
+                                                int deleted = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().clearLog(logIds);
+                                                logger.info(">>>>>>>>>>> xxl-job, log-clean batch deleted:{} rows", deleted);
+                                                TimeUnit.MILLISECONDS.sleep(100);
+                                            }
+                                        } while (logIds!=null && !logIds.isEmpty() && !toStop);
+                                    }
                                 } finally {
                                     cleaning.set(false);
                                 }
@@ -154,6 +163,86 @@ public class JobLogReportHelper {
         logReportThread.setDaemon(true);
         logReportThread.setName("xxl-job, admin JobLogReportHelper");
         logReportThread.start();
+    }
+
+    /**
+     * Drop all expired partitions whose upper bound <= clearBeforeTime.
+     * Returns true if the table is partitioned and at least one partition was processed
+     * (dropped or confirmed already absent). Returns false if the table is not partitioned
+     * or any DDL error occurs (caller should fall back to batch DELETE).
+     *
+     * Partition naming convention: p_YYYY_MM (e.g. p_2026_04).
+     * Only partitions with LESS THAN boundary <= clearBeforeTime are dropped;
+     * p_future (MAXVALUE) is never touched.
+     */
+    private boolean tryDropExpiredPartitions(Date clearBeforeTime) {
+        Connection conn = null;
+        try {
+            conn = XxlJobAdminBootstrap.getInstance().getDataSource().getConnection();
+
+            // 1. detect whether xxl_job_log is a partitioned table
+            List<String> expiredPartitions = new ArrayList<>();
+            String detectSql =
+                "SELECT partition_name, partition_description " +
+                "FROM information_schema.partitions " +
+                "WHERE table_schema = DATABASE() " +
+                "  AND table_name = 'xxl_job_log' " +
+                "  AND partition_name != 'p_future' " +
+                "  AND partition_name IS NOT NULL " +
+                "ORDER BY partition_ordinal_position";
+
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery(detectSql)) {
+
+                if (!rs.isBeforeFirst()) {
+                    // no named partitions → non-partitioned table, skip
+                    return false;
+                }
+
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                while (rs.next()) {
+                    String pName = rs.getString("partition_name");
+                    String lessThanStr = rs.getString("partition_description");
+                    // partition_description for RANGE COLUMNS(datetime) is quoted: 'YYYY-MM-DD HH:MM:SS'
+                    lessThanStr = lessThanStr.replace("'", "").trim();
+                    try {
+                        Date lessThan = sdf.parse(lessThanStr);
+                        // drop if partition upper bound is entirely before clearBeforeTime
+                        if (!lessThan.after(clearBeforeTime)) {
+                            expiredPartitions.add(pName);
+                        }
+                    } catch (Exception ignored) {
+                        // unparseable boundary (e.g. MAXVALUE already filtered out above)
+                    }
+                }
+            }
+
+            if (expiredPartitions.isEmpty()) {
+                logger.info(">>>>>>>>>>> xxl-job, log-clean no expired partitions to drop (clearBeforeTime:{})", clearBeforeTime);
+                return true;
+            }
+
+            // 2. DROP each expired partition individually so a single failure doesn't block others
+            for (String pName : expiredPartitions) {
+                String dropSql = "ALTER TABLE xxl_job_log DROP PARTITION " + pName;
+                try (Statement st = conn.createStatement()) {
+                    st.execute(dropSql);
+                    logger.info(">>>>>>>>>>> xxl-job, log-clean dropped partition:{}", pName);
+                } catch (Exception e) {
+                    // partition may have been dropped by a concurrent operation; log and continue
+                    logger.warn(">>>>>>>>>>> xxl-job, log-clean drop partition:{} failed, reason:{}", pName, e.getMessage());
+                }
+            }
+            return true;
+
+        } catch (Exception e) {
+            logger.warn(">>>>>>>>>>> xxl-job, log-clean tryDropExpiredPartitions failed, will fallback to batch DELETE. reason:{}", e.getMessage());
+            return false;
+        } finally {
+            if (conn != null) {
+                try { conn.close(); } catch (Exception ignored) {}
+            }
+        }
     }
 
     /**
