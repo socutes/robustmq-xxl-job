@@ -44,7 +44,7 @@ public class JobFailAlarmMonitorHelper {
 				while (!toStop) {
 					try {
 
-						List<Long> failLogIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findFailJobLogIds(1000);
+						List<Long> failLogIds = XxlJobAdminBootstrap.getInstance().getXxlJobLogMapper().findFailJobLogIds(1000, XxlJobAdminBootstrap.getInstance().getLogretentiondays());
 						if (failLogIds!=null && !failLogIds.isEmpty()) {
 							for (long failLogId: failLogIds) {
 

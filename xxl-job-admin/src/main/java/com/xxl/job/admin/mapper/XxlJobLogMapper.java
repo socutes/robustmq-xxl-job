@@ -51,7 +51,8 @@ public interface XxlJobLogMapper {
 									  @Param("pagesize") int pagesize);
 	public int clearLog(@Param("logIds") List<Long> logIds);
 
-	public List<Long> findFailJobLogIds(@Param("pagesize") int pagesize);
+	public List<Long> findFailJobLogIds(@Param("pagesize") int pagesize,
+										@Param("retentionDays") int retentionDays);
 
 	public int updateAlarmStatus(@Param("logId") long logId,
 								 @Param("oldAlarmStatus") int oldAlarmStatus,

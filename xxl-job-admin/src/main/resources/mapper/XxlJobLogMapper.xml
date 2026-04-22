@@ -74,7 +74,7 @@
 				AND t.handle_code = 0
 			</if>
 		</trim>
-		ORDER BY t.id DESC
+		ORDER BY t.trigger_time DESC, t.id DESC
 		LIMIT #{offset}, #{pagesize}
 	</select>
 	
@@ -231,6 +231,7 @@
 		SELECT id FROM `xxl_job_log`
 		WHERE handle_code IN (500, 502)
 		AND `alarm_status` = 0
+		AND trigger_time >= DATE_SUB(NOW(), INTERVAL #{retentionDays} DAY)
 		ORDER BY id ASC
 		LIMIT #{pagesize}
 	</select>
